@@ -120,6 +120,24 @@ func main() {
 	// 初始化游戏管理器
 	manager := game.NewManager(hub, userRepo, roomRepo, gameRepo, txRepo, platformRepo, balanceCache, riskService, zapLogger)
 
+	// 设置 Hub 断开连接回调，用于清理游戏引擎中的用户状态
+	hub.SetDisconnectCallback(func(roomID, userID int64, reason string) {
+		zapLogger.Info("Hub disconnect callback triggered",
+			zap.Int64("room_id", roomID),
+			zap.Int64("user_id", userID),
+			zap.String("reason", reason),
+		)
+		if processor := manager.GetRoom(roomID); processor != nil {
+			// 检查是观战者还是参与者
+			if processor.IsSpectator(userID) {
+				processor.RemoveSpectator(userID)
+			} else {
+				// 标记玩家离线（不完全移除，允许重连）
+				processor.SetPlayerOnline(userID, false)
+			}
+		}
+	})
+
 	// 初始化服务
 	authService := service.NewAuthService(userRepo, cfg)
 	authService.SetRiskService(riskService) // 设置风控服务用于设备指纹检测
