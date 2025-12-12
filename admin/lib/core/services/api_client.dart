@@ -92,6 +92,35 @@ class AdminApiClient {
     return resp.data as Map<String, dynamic>;
   }
 
+  /// GET /api/admin/reconciliation
+  /// 返回详细的资金对账报告（包含差异分析）
+  Future<Map<String, dynamic>> getReconciliationReport() async {
+    final resp = await _dio.get('/admin/reconciliation');
+    return resp.data as Map<String, dynamic>;
+  }
+
+  /// GET /api/admin/reports/balance-check/history
+  /// 返回对账历史记录
+  Future<Map<String, dynamic>> getBalanceCheckHistory({
+    int page = 1,
+    int pageSize = 20,
+    String? scope, // global / owner
+    int? ownerId,
+    String? periodType, // 2h / daily
+  }) async {
+    final resp = await _dio.get(
+      '/admin/reports/balance-check/history',
+      queryParameters: {
+        'page': page,
+        'page_size': pageSize,
+        if (scope != null) 'scope': scope,
+        if (ownerId != null) 'owner_id': ownerId,
+        if (periodType != null) 'period_type': periodType,
+      },
+    );
+    return resp.data as Map<String, dynamic>;
+  }
+
   /// 最近资金申请（使用通用 /fund-requests，管理员能看到所有用户）
   Future<Map<String, dynamic>> listFundRequests({
     int page = 1,
