@@ -1,0 +1,202 @@
+version: '3.8'
+
+# 5SecondsGo 生产环境部署配置
+# 使用方法: docker-compose -f docker-compose.prod.yml up -d
+
+services:
+  # ==================== 核心服务 ====================
+  
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: fiveseconds-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-fiveseconds}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: ${DB_NAME:-fiveseconds}
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:5432:5432"  # 只监听本地，不暴露到公网
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./server/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-fiveseconds}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - backend
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: fiveseconds-redis
+    command: >
+      redis-server 
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      --maxmemory 512mb 
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+    ports:
+      - "127.0.0.1:6379:6379"  # 只监听本地
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - backend
+
+  # Go 后端服务
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: fiveseconds-server
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:-fiveseconds}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-fiveseconds}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - SERVER_MODE=release
+    ports:
+      - "127.0.0.1:8080:8080"   # API 端口，通过 Nginx 代理
+      - "127.0.0.1:9091:9091"   # Prometheus metrics
+    volumes:
+      - ./server/config:/app/config:ro
+      - server_logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+    networks:
+      - backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # ==================== 监控服务 ====================
+
+  # Prometheus 指标收集
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: fiveseconds-prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    restart: always
+    networks:
+      - backend
+      - monitoring
+
+  # Alertmanager 告警管理
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: fiveseconds-alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ./deploy/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    restart: always
+    networks:
+      - monitoring
+
+  # Grafana 可视化
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: fiveseconds-grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD is required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+      GF_SMTP_ENABLED: ${SMTP_ENABLED:-false}
+      GF_SMTP_HOST: ${SMTP_HOST:-}
+      GF_SMTP_USER: ${SMTP_USER:-}
+      GF_SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+    restart: always
+    networks:
+      - monitoring
+
+  # ==================== 日志服务 ====================
+
+  # Loki 日志存储
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: fiveseconds-loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./deploy/loki/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: always
+    networks:
+      - monitoring
+
+  # Promtail 日志收集
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: fiveseconds-promtail
+    volumes:
+      - ./deploy/promtail/promtail.yaml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - server_logs:/var/log/fiveseconds:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    restart: always
+    networks:
+      - monitoring
+
+networks:
+  backend:
+    driver: bridge
+  monitoring:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:
+  loki_data:
+  server_logs:

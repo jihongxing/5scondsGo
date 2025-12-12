@@ -39,6 +39,12 @@ admin/.flutter-plugins-dependencies
 .env.*.local
 *.local.yaml
 
+# Keep example files
+!.env.example
+
+# Backups
+backups/
+
 # Logs
 *.log
 logs/

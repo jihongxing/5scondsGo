@@ -1,0 +1,15 @@
+# Grafana 仪表盘自动配置
+
+apiVersion: 1
+
+providers:
+  - name: '5SecondsGo Dashboards'
+    orgId: 1
+    folder: '5SecondsGo'
+    folderUid: 'fiveseconds'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
