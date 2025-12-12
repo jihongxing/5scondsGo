@@ -324,6 +324,8 @@ func setupRoutes(r *gin.Engine, h *handler.Handler, wh *handler.WalletHandler, g
 			admin.PUT("/rooms/:id/status", h.AdminUpdateRoomStatus)
 			admin.GET("/platform", h.GetPlatformAccount)
 			admin.GET("/conservation", h.CheckConservation)
+			// 详细资金对账报告（包含差异分析）
+			admin.GET("/reconciliation", h.GetReconciliationReport)
 			// 资金守恒检查报表（对账详情 + 对账类目汇总）
 			admin.GET("/reports/balance-check", h.GetBalanceCheckReport)
 			// 资金对账历史（全局 + 房主）

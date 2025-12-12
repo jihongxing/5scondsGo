@@ -403,6 +403,11 @@ func (s *FundService) CheckConservation(ctx context.Context) (*model.Conservatio
 	return s.platformRepo.CheckConservation(ctx)
 }
 
+// GetReconciliationReport 获取详细的资金对账报告
+func (s *FundService) GetReconciliationReport(ctx context.Context) (*model.FundReconciliationReport, error) {
+	return s.platformRepo.GetReconciliationReport(ctx)
+}
+
 // GetFundSummary 获取资金统计摘要
 func (s *FundService) GetFundSummary(ctx context.Context, userID *int64) (*model.FundSummary, error) {
 	summary := &model.FundSummary{}

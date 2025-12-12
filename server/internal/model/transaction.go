@@ -162,6 +162,42 @@ type ConservationCheck struct {
 	Difference         decimal.Decimal `json:"difference"`           // 差额
 }
 
+// FundReconciliationReport 资金对账报告（详细版）
+type FundReconciliationReport struct {
+	// 外部资金注入（只有房主才能和外部有资金往来）
+	ExternalFunds struct {
+		OwnerDeposit  decimal.Decimal `json:"owner_deposit"`  // 房主充值总额（已批准）
+		MarginDeposit decimal.Decimal `json:"margin_deposit"` // 保证金充值总额（已批准）
+		OwnerWithdraw decimal.Decimal `json:"owner_withdraw"` // 房主提现总额（已批准）
+		NetInflow     decimal.Decimal `json:"net_inflow"`     // 净流入 = 充值 - 提现
+	} `json:"external_funds"`
+
+	// 系统内资金分布
+	SystemFunds struct {
+		PlayerBalance    decimal.Decimal `json:"player_balance"`    // 玩家可用余额
+		PlayerFrozen     decimal.Decimal `json:"player_frozen"`     // 玩家冻结余额
+		OwnerBalance     decimal.Decimal `json:"owner_balance"`     // 房主可用余额
+		OwnerCommission  decimal.Decimal `json:"owner_commission"`  // 房主佣金收益
+		OwnerMargin      decimal.Decimal `json:"owner_margin"`      // 房主保证金
+		PlatformBalance  decimal.Decimal `json:"platform_balance"`  // 平台余额
+		Total            decimal.Decimal `json:"total"`             // 系统内资金总和
+	} `json:"system_funds"`
+
+	// 对账结果
+	Reconciliation struct {
+		ExpectedTotal decimal.Decimal `json:"expected_total"` // 预期总额（净流入）
+		ActualTotal   decimal.Decimal `json:"actual_total"`   // 实际总额（系统内资金）
+		Difference    decimal.Decimal `json:"difference"`     // 差异
+		IsBalanced    bool            `json:"is_balanced"`    // 是否平衡
+	} `json:"reconciliation"`
+
+	// 差异分析
+	Analysis struct {
+		UnrecordedMargin decimal.Decimal `json:"unrecorded_margin"` // 未记录的保证金（数据库直接设置）
+		Explanation      string          `json:"explanation"`       // 差异说明
+	} `json:"analysis"`
+}
+
 // FundConservationHistory 对账历史记录（全局 + 房主维度）
 type FundConservationHistory struct {
 	ID                       int64           `json:"id" db:"id"`

@@ -569,6 +569,16 @@ func (h *Handler) CheckConservation(c *gin.Context) {
 	c.JSON(http.StatusOK, check)
 }
 
+// GetReconciliationReport 获取详细的资金对账报告
+func (h *Handler) GetReconciliationReport(c *gin.Context) {
+	report, err := h.fundService.GetReconciliationReport(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, report)
+}
+
 func (h *Handler) GetFundSummary(c *gin.Context) {
 	var userID *int64
 	if GetRole(c) != model.RoleAdmin {

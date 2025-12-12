@@ -417,25 +417,31 @@ func (r *PlatformRepo) CheckConservation(ctx context.Context) (*model.Conservati
 		return nil, err
 	}
 
-	// 4. 从交易记录计算房主累计充值和提现
+	// 4. 从fund_requests表计算外部资金进出（只有房主才能和外部有资金往来）
+	// owner_deposit: 房主充值（外部 -> 房主余额）
+	// margin_deposit: 保证金充值（外部 -> 房主保证金）
+	// owner_withdraw: 房主提现（房主余额 -> 外部）
 	err = DB.QueryRow(ctx, `SELECT 
-		COALESCE(SUM(CASE WHEN tx_type = 'deposit' AND amount > 0 THEN amount ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN tx_type = 'withdraw' AND amount < 0 THEN ABS(amount) ELSE 0 END), 0)
-		FROM balance_transactions bt
-		JOIN users u ON bt.user_id = u.id
-		WHERE u.role = 'owner'`).Scan(&result.TotalOwnerDeposit, &result.TotalOwnerWithdraw)
+		COALESCE(SUM(CASE WHEN request_type = 'owner_deposit' THEN amount ELSE 0 END), 0) AS owner_deposit,
+		COALESCE(SUM(CASE WHEN request_type = 'margin_deposit' THEN amount ELSE 0 END), 0) AS margin_deposit,
+		COALESCE(SUM(CASE WHEN request_type = 'owner_withdraw' THEN amount ELSE 0 END), 0) AS owner_withdraw
+		FROM fund_requests 
+		WHERE status = 'approved'`).Scan(&result.TotalOwnerDeposit, &result.TotalMargin, &result.TotalOwnerWithdraw)
 	if err != nil {
 		// 如果查询失败，不影响主流程，设为0
 		result.TotalOwnerDeposit = decimal.Zero
 		result.TotalOwnerWithdraw = decimal.Zero
 	}
+	// 外部注入总额 = 房主充值 + 保证金充值
+	result.TotalOwnerDeposit = result.TotalOwnerDeposit.Add(result.TotalMargin)
 
 	// 5. 计算系统内资金总和
-	// 系统内资金 = 玩家余额(可用+冻结) + 房主可用余额 + 房主佣金收益 + 平台余额
+	// 系统内资金 = 玩家余额(可用+冻结) + 房主可用余额 + 房主佣金收益 + 房主保证金 + 平台余额
 	result.SystemTotalFunds = result.TotalPlayerBalance.
 		Add(result.TotalPlayerFrozen).
 		Add(result.TotalOwnerBalance).
 		Add(result.TotalOwnerCommission).
+		Add(result.TotalMargin).
 		Add(result.PlatformBalance)
 
 	// 6. 计算预期总额（房主净充值 = 充值 - 提现）
@@ -512,6 +518,98 @@ func (r *PlatformRepo) CheckConservationByOwner(ctx context.Context, ownerID int
 	result.IsBalanced = result.Difference.Abs().LessThanOrEqual(tolerance)
 
 	return result, nil
+}
+
+// GetReconciliationReport 获取详细的资金对账报告
+func (r *PlatformRepo) GetReconciliationReport(ctx context.Context) (*model.FundReconciliationReport, error) {
+	report := &model.FundReconciliationReport{}
+
+	// 1. 获取外部资金注入（从fund_requests表，只有房主才能和外部有资金往来）
+	err := DB.QueryRow(ctx, `SELECT 
+		COALESCE(SUM(CASE WHEN request_type = 'owner_deposit' THEN amount ELSE 0 END), 0) AS owner_deposit,
+		COALESCE(SUM(CASE WHEN request_type = 'margin_deposit' THEN amount ELSE 0 END), 0) AS margin_deposit,
+		COALESCE(SUM(CASE WHEN request_type = 'owner_withdraw' THEN amount ELSE 0 END), 0) AS owner_withdraw
+		FROM fund_requests 
+		WHERE status = 'approved'`).Scan(
+		&report.ExternalFunds.OwnerDeposit,
+		&report.ExternalFunds.MarginDeposit,
+		&report.ExternalFunds.OwnerWithdraw,
+	)
+	if err != nil {
+		return nil, err
+	}
+	report.ExternalFunds.NetInflow = report.ExternalFunds.OwnerDeposit.
+		Add(report.ExternalFunds.MarginDeposit).
+		Sub(report.ExternalFunds.OwnerWithdraw)
+
+	// 2. 获取玩家余额
+	err = DB.QueryRow(ctx, `SELECT 
+		COALESCE(SUM(balance), 0), 
+		COALESCE(SUM(frozen_balance), 0) 
+		FROM users WHERE role = 'player'`).Scan(
+		&report.SystemFunds.PlayerBalance,
+		&report.SystemFunds.PlayerFrozen,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. 获取房主余额
+	err = DB.QueryRow(ctx, `SELECT 
+		COALESCE(SUM(balance), 0),
+		COALESCE(SUM(owner_room_balance), 0),
+		COALESCE(SUM(owner_margin_balance), 0)
+		FROM users WHERE role = 'owner'`).Scan(
+		&report.SystemFunds.OwnerBalance,
+		&report.SystemFunds.OwnerCommission,
+		&report.SystemFunds.OwnerMargin,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. 获取平台余额
+	err = DB.QueryRow(ctx, `SELECT COALESCE(platform_balance, 0) FROM platform_account WHERE id = 1`).Scan(
+		&report.SystemFunds.PlatformBalance,
+	)
+	if err != nil {
+		report.SystemFunds.PlatformBalance = decimal.Zero
+	}
+
+	// 5. 计算系统内资金总和
+	report.SystemFunds.Total = report.SystemFunds.PlayerBalance.
+		Add(report.SystemFunds.PlayerFrozen).
+		Add(report.SystemFunds.OwnerBalance).
+		Add(report.SystemFunds.OwnerCommission).
+		Add(report.SystemFunds.OwnerMargin).
+		Add(report.SystemFunds.PlatformBalance)
+
+	// 6. 对账结果
+	report.Reconciliation.ExpectedTotal = report.ExternalFunds.NetInflow
+	report.Reconciliation.ActualTotal = report.SystemFunds.Total
+	report.Reconciliation.Difference = report.Reconciliation.ActualTotal.Sub(report.Reconciliation.ExpectedTotal)
+
+	tolerance := decimal.NewFromFloat(0.01)
+	report.Reconciliation.IsBalanced = report.Reconciliation.Difference.Abs().LessThanOrEqual(tolerance)
+
+	// 7. 差异分析
+	// 检查是否有未通过fund_requests记录的保证金
+	report.Analysis.UnrecordedMargin = report.SystemFunds.OwnerMargin.Sub(report.ExternalFunds.MarginDeposit)
+	
+	if !report.Reconciliation.IsBalanced {
+		if report.Analysis.UnrecordedMargin.GreaterThan(decimal.Zero) {
+			report.Analysis.Explanation = fmt.Sprintf(
+				"差异主要来自未通过fund_requests记录的保证金: %.2f。这部分可能是数据库初始化时直接设置的。",
+				report.Analysis.UnrecordedMargin.InexactFloat64(),
+			)
+		} else {
+			report.Analysis.Explanation = "存在资金差异，需要进一步排查。"
+		}
+	} else {
+		report.Analysis.Explanation = "资金守恒，无异常。"
+	}
+
+	return report, nil
 }
 
 // GetUserGameHistory 获取用户游戏历史
