@@ -20,6 +20,7 @@ dependencies:
 
   # 网络请求
   dio: ^5.4.0
+  dio_smart_retry: ^6.0.0
 
   # WebSocket
   web_socket_channel: ^2.4.0
@@ -29,6 +30,10 @@ dependencies:
 
   # 本地存储
   shared_preferences: ^2.2.2
+  flutter_secure_storage: ^9.0.0
+
+  # 环境配置
+  flutter_dotenv: ^5.1.0
 
   # UI
   flutter_screenutil: ^5.9.0
@@ -57,3 +62,5 @@ flutter:
 
   assets:
     - assets/sounds/
+    - .env
+    - .env.production

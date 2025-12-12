@@ -1,25 +1,27 @@
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:dio_smart_retry/dio_smart_retry.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-// Android 模拟器用 10.0.2.2 访问宿主机，Web/iOS 用 localhost
-const String baseUrl = kIsWeb ? 'http://localhost:8080/api' : 'http://10.0.2.2:8080/api';
+import '../config/app_config.dart';
+import 'secure_storage_service.dart';
 
 class ApiClient {
   late final Dio _dio;
   String? _token;
+  final SecureStorageService _secureStorage = SecureStorageService.instance;
 
   ApiClient() {
     _dio = Dio(BaseOptions(
-      baseUrl: baseUrl,
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 10),
+      baseUrl: AppConfig.instance.apiBaseUrl,
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 15),
+      sendTimeout: const Duration(seconds: 15),
       headers: {
         'Content-Type': 'application/json',
       },
     ));
 
+    // 添加认证拦截器
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) {
         if (_token != null) {
@@ -35,23 +37,46 @@ class ApiClient {
         return handler.next(error);
       },
     ));
+
+    // 添加重试拦截器
+    _dio.interceptors.add(RetryInterceptor(
+      dio: _dio,
+      retries: 3,
+      retryDelays: const [
+        Duration(seconds: 1),
+        Duration(seconds: 2),
+        Duration(seconds: 3),
+      ],
+      // 只对特定错误重试
+      retryEvaluator: (error, attempt) {
+        // 不重试认证错误
+        if (error.response?.statusCode == 401 ||
+            error.response?.statusCode == 403) {
+          return false;
+        }
+        // 重试网络错误和服务器错误
+        return error.type == DioExceptionType.connectionTimeout ||
+            error.type == DioExceptionType.sendTimeout ||
+            error.type == DioExceptionType.receiveTimeout ||
+            error.type == DioExceptionType.connectionError ||
+            (error.response?.statusCode ?? 0) >= 500;
+      },
+    ));
   }
 
   Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
-    _token = prefs.getString('auth_token');
+    // 从安全存储加载 Token
+    _token = await _secureStorage.getToken();
   }
 
   Future<void> setToken(String token) async {
     _token = token;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('auth_token', token);
+    await _secureStorage.saveToken(token);
   }
 
   Future<void> clearToken() async {
     _token = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('auth_token');
+    await _secureStorage.deleteToken();
   }
 
   String? get token => _token;
@@ -155,15 +180,14 @@ class ApiClient {
     try {
       final response = await _dio.post('/owner/rooms', data: {
         'name': name,
-        'bet_amount': betAmount.toStringAsFixed(2), // 服务端期望字符串格式
+        'bet_amount': betAmount.toStringAsFixed(2),
         'winner_count': winnerCount,
         'max_players': maxPlayers,
-        if (ownerCommission != null) 'owner_commission_rate': ownerCommission.toStringAsFixed(4), // 服务端期望字符串格式
+        if (ownerCommission != null) 'owner_commission_rate': ownerCommission.toStringAsFixed(4),
         if (password != null && password.isNotEmpty) 'password': password,
       });
       return response.data;
     } on DioException catch (e) {
-      // 提取服务器返回的错误信息
       final errorMsg = e.response?.data?['error'] ?? e.message ?? '未知错误';
       throw Exception(errorMsg);
     }
@@ -210,7 +234,6 @@ class ApiClient {
 
   // ===== Owner 资金审批 =====
 
-  /// 获取下级玩家的资金申请列表
   Future<List<Map<String, dynamic>>> listOwnerFundRequests({int page = 1, int pageSize = 20, String? status}) async {
     final response = await _dio.get('/owner/fund-requests', queryParameters: {
       'page': page,
@@ -227,7 +250,6 @@ class ApiClient {
     return <Map<String, dynamic>>[];
   }
 
-  /// 审批下级玩家的资金申请
   Future<void> processOwnerFundRequest(int requestId, {required bool approved, String? remark}) async {
     await _dio.post('/owner/fund-requests/$requestId/process', data: {
       'approved': approved,
@@ -359,7 +381,6 @@ class ApiClient {
     return response.data;
   }
 
-  /// 房主收益转可提现余额
   Future<void> transferEarnings(double amount) async {
     await _dio.post('/wallet/transfer-earnings', data: {
       'amount': amount,

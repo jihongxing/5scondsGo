@@ -43,3 +43,12 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# 环境配置文件（包含敏感信息）
+.env
+.env.production
+.env.local
+*.env.local
+
+# 保留示例文件
+!.env.example

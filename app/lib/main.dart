@@ -8,9 +8,13 @@ import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'core/providers/locale_provider.dart';
 import 'core/services/api_client.dart';
+import 'core/config/app_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // 初始化应用配置（加载环境变量）
+  await AppConfig.init();
   
   // 在应用启动时初始化 ApiClient，加载保存的 token
   await ApiClientSingleton.instance.init();

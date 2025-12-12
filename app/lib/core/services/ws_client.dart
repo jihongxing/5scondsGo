@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import '../config/app_config.dart';
 import 'api_client.dart';
-
-const String wsUrl = kIsWeb ? 'ws://localhost:8080/ws' : 'ws://10.0.2.2:8080/ws';
 
 // WebSocket 消息类型
 class WSMessageType {
@@ -95,7 +93,8 @@ class WSClient {
       _messageController?.close();
       _messageController = StreamController<Map<String, dynamic>>.broadcast();
       
-      _channel = WebSocketChannel.connect(Uri.parse('$wsUrl?token=$token'));
+      final wsBaseUrl = AppConfig.instance.wsBaseUrl;
+      _channel = WebSocketChannel.connect(Uri.parse('$wsBaseUrl?token=$token'));
       
       _channel!.stream.listen(
         _onMessage,
