@@ -158,32 +158,31 @@ func (c *wsClient) writeJSON(v interface{}) error {
 
 func (c *wsClient) readPump() {
 	defer func() {
-		c.handleDisconnect()
-		c.conn.Close()
+		c.cleanup()
 	}()
 
+	// 设置读取超时：如果 60 秒内没有收到任何消息（包括 pong），则断开
 	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.conn.SetPongHandler(func(string) error {
+		// 收到 pong，重置读取超时
 		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		c.logger.Debug("Pong received")
 		return nil
 	})
 
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				c.logger.Error("WebSocket read error", zap.Error(err))
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
+				c.logger.Warn("WebSocket read error", zap.Error(err))
 			} else {
-				c.logger.Debug("WebSocket read ended", zap.Error(err))
+				c.logger.Debug("WebSocket connection closed", zap.Error(err))
 			}
-			break
+			return
 		}
 
 		// 收到任何消息都重置读取超时
-		newDeadline := time.Now().Add(60 * time.Second)
-		if err := c.conn.SetReadDeadline(newDeadline); err != nil {
-			c.logger.Error("Failed to set read deadline", zap.Error(err))
-		}
+		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 		var msg model.WSMessage
 		if err := json.Unmarshal(message, &msg); err != nil {
@@ -196,21 +195,31 @@ func (c *wsClient) readPump() {
 }
 
 func (c *wsClient) writePump() {
+	// 每 30 秒发送一次 ping
 	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
-		c.logger.Debug("writePump exited")
 	}()
 
 	for range ticker.C {
-		// 使用 WriteControl 发送 ping，它有自己的超时控制，不会阻塞太久
+		// 设置写入超时
+		c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		
+		// 发送 ping
 		if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
-			c.logger.Debug("Failed to send ping", zap.Error(err))
+			c.logger.Debug("Failed to send ping, closing connection", zap.Error(err))
+			// ping 失败，主动关闭连接，这会触发 readPump 退出
+			c.conn.Close()
 			return
 		}
-		c.logger.Debug("Ping sent successfully")
 	}
+}
+
+// cleanup 清理连接资源（只调用一次）
+func (c *wsClient) cleanup() {
+	c.handleDisconnect()
+	c.conn.Close()
+	c.logger.Info("WebSocket connection cleaned up", zap.String("session_id", c.sessionID))
 }
 
 func (c *wsClient) handleMessage(msg *model.WSMessage) {
