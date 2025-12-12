@@ -1,0 +1,53 @@
+server:
+  host: 0.0.0.0
+  port: 8080
+  ws_path: /ws
+  metrics_port: 9091
+  mode: debug
+
+database:
+  host: localhost
+  port: 5450
+  user: fiveseconds
+  password: fiveseconds123
+  dbname: fiveseconds
+  sslmode: disable
+  max_open_conns: 100
+  max_idle_conns: 10
+  conn_max_lifetime: 1h
+
+redis:
+  host: localhost
+  port: 6450
+  password: ""
+  db: 0
+  pool_size: 50
+
+game:
+  phase_duration: 5           # 每阶段时长(秒)
+  tick_interval: 1            # tick间隔(秒)
+  bet_amounts:
+    - 5
+    - 10
+    - 20
+    - 50
+    - 100
+    - 200
+  max_room_players: 100
+  min_room_players: 2
+  default_owner_commission: 0.03
+  platform_commission: 0.02
+  max_total_commission: 0.10
+  min_margin_balance: 2000
+  min_custody_quota: 2000
+
+auth:
+  jwt_secret: "your-secret-key-change-in-production"
+  jwt_expire: 24h
+  min_password_length: 6
+  invite_code_length: 6
+
+logging:
+  level: info
+  format: json
+  output: stdout

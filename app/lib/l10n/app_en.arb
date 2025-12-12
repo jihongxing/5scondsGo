@@ -1,0 +1,318 @@
+{
+  "@@locale": "en",
+  "appTitle": "5SecondsGo",
+  "@appTitle": {
+    "description": "App title"
+  },
+  "login": "Login",
+  "register": "Register",
+  "username": "Username",
+  "password": "Password",
+  "inviteCode": "Invite Code",
+  "loginButton": "Sign In",
+  "registerButton": "Sign Up",
+  "noAccount": "Don't have an account?",
+  "hasAccount": "Already have an account?",
+  
+  "home": "Home",
+  "rooms": "Rooms",
+  "profile": "Profile",
+  "wallet": "Wallet",
+  
+  "joinRoom": "Join Room",
+  "leaveRoom": "Leave Room",
+  "createRoom": "Create Room",
+  "roomName": "Room Name",
+  "betAmount": "Bet Amount",
+  "winnerCount": "Winner Count",
+  "maxPlayers": "Max Players",
+  "commissionRate": "Commission Rate",
+  
+  "phaseWaiting": "Waiting",
+  "phaseCountdown": "Countdown",
+  "phaseBetting": "Betting",
+  "phaseInGame": "In Game",
+  "phaseSettlement": "Settlement",
+  "phaseReset": "Reset",
+  
+  "autoReady": "Auto Ready",
+  "ready": "Ready",
+  "notReady": "Not Ready",
+  
+  "balance": "Balance",
+  "frozenBalance": "Frozen",
+  "deposit": "Deposit",
+  "withdraw": "Withdraw",
+  
+  "currentRound": "Round",
+  "poolAmount": "Pool",
+  "winners": "Winners",
+  "prize": "Prize",
+  
+  "players": "Players",
+  "online": "Online",
+  "offline": "Offline",
+  
+  "submit": "Submit",
+  "cancel": "Cancel",
+  "confirm": "Confirm",
+  "close": "Close",
+  "save": "Save",
+  
+  "error": "Error",
+  "success": "Success",
+  "loading": "Loading...",
+  "noData": "No Data",
+  
+  "invalidCredentials": "Invalid username or password",
+  "usernameExists": "Username already exists",
+  "invalidInviteCode": "Invalid invite code",
+  "roomFull": "Room is full",
+  "insufficientBalance": "Insufficient balance",
+  
+  "congratulations": "Congratulations!",
+  "youWon": "You Won!",
+  "betterLuckNextTime": "Better Luck Next Time",
+  
+  "verifyResult": "Verify Result",
+  "commitHash": "Commit Hash",
+  "revealSeed": "Reveal Seed",
+  
+  "roomThemeTitle": "Room Theme",
+  "roomThemeOwnerOnly": "Only room owner can change theme",
+  "themeClassic": "Classic",
+  "themeNeon": "Neon",
+  "themeOcean": "Ocean",
+  "themeForest": "Forest",
+  "themeLuxury": "Luxury",
+  
+  "settings": "Settings",
+  "language": "Language",
+  "logout": "Logout",
+  "leaderboard": "Leaderboard",
+  "friends": "Friends",
+  "spectate": "Spectate",
+  "switchToParticipant": "Join Game",
+  "betPerRound": "Bet/Round",
+  "gameHistory": "History",
+  "minPlayersToStart": "Min {count} to start",
+  "@minPlayersToStart": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "congratsWin": "Congratulations!",
+  "wonPrize": "won",
+  "playerWon": "{names} won",
+  "@playerWon": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "bettingComplete": "Betting complete: {count} joined, Pool ¥{pool}",
+  "@bettingComplete": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "pool": {
+        "type": "String"
+      }
+    }
+  },
+  "noWinner": "No winner",
+  "wonAmount": "{names} won ¥{prize}",
+  "@wonAmount": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "prize": {
+        "type": "String"
+      }
+    }
+  },
+  "gameCancelled": "Game cancelled",
+  "notEnoughPlayers": "Not enough players",
+  "insufficientBalanceDisqualified": "Insufficient balance, you cannot participate in this round",
+  "disqualifiedFromRound": "You have been disqualified from this round",
+  "roundCancelledNotEnoughPlayers": "Round cancelled: need {minRequired} players, only {currentPlayers} qualified",
+  "@roundCancelledNotEnoughPlayers": {
+    "placeholders": {
+      "minRequired": {
+        "type": "int"
+      },
+      "currentPlayers": {
+        "type": "int"
+      }
+    }
+  },
+  "gameRecords": "Records",
+  "myProfile": "Profile",
+  "owner": "Owner",
+  "admin": "Admin",
+  "player": "Player",
+  "commission": "Commission",
+  "noRooms": "No rooms available",
+  "contactOwnerToCreate": "Contact owner to create a room",
+  "enterRoomPassword": "Enter room password",
+  "passwordHint": "Password",
+  "availableBalance": "Available",
+  "totalBalance": "Total",
+  "marginDeposit": "Margin",
+  "commissionEarnings": "Commission",
+  "myInviteCode": "My Invite Code",
+  "inviteCodeCopied": "Invite code copied",
+  "selectLanguage": "Select Language",
+  "confirmLogout": "Confirm Logout",
+  "confirmLogoutMessage": "Are you sure you want to log out?",
+  "loadFailed": "Load failed",
+  "retry": "Retry",
+  "noFriends": "No friends yet",
+  "clickToAddFriend": "Click top right to add friends",
+  "searchFriends": "Search friends...",
+  "addFriend": "Add Friend",
+  "userId": "User ID",
+  "enterUserId": "Enter user ID",
+  "send": "Send",
+  "friendRequestSent": "Friend request sent",
+  "sendFailed": "Send failed",
+  "inRoom": "In room",
+  "inviteToRoom": "Invite to room",
+  "removeFriend": "Remove friend",
+  "confirmRemoveFriend": "Remove Friend",
+  "confirmRemoveFriendMessage": "Are you sure you want to remove {name}?",
+  "@confirmRemoveFriendMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "remove": "Remove",
+  "totalGames": "Games",
+  "wins": "Wins",
+  "winRate": "Win Rate",
+  "totalBet": "Total Bet",
+  "totalWon": "Total Won",
+  "netProfit": "Net P/L",
+  "roundNumber": "Round {number}",
+  "@roundNumber": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
+  "skipped": "Skipped",
+  "bet": "Bet",
+  "ownerWallet": "Owner Wallet",
+  "marginBalance": "Margin",
+  "commissionBalance": "Commission",
+  "totalCommission": "Total Commission",
+  "canRechargePlayer": "For player recharge",
+  "fixedGuarantee": "Fixed guarantee",
+  "canTransferToBalance": "Can transfer to balance",
+  "transferToBalance": "Transfer to Balance",
+  "transferAmount": "Transfer Amount",
+  "maxTransfer": "Max {amount}",
+  "@maxTransfer": {
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
+  "transfer": "Transfer",
+  "transferNote": "Note: Transfer commission to available balance for player recharge or withdrawal",
+  "submitFundRequest": "Submit Fund Request",
+  "ownerDeposit": "Balance Deposit",
+  "ownerWithdraw": "Balance Withdraw",
+  "marginDeposit2": "Margin Deposit",
+  "amount": "Amount",
+  "remarkOptional": "Remark (Optional)",
+  "submitRequest": "Submit Request",
+  "fundRequestNote": "Note: Deposit/withdrawal requests need admin approval before balance changes",
+  "fundRequestRecords": "Fund Request Records",
+  "pending": "Pending",
+  "approved": "Approved",
+  "rejected": "Rejected",
+  "transactionHistory": "Transaction History",
+  "gameBet": "Game Bet",
+  "gameWin": "Game Win",
+  "gameRefund": "Game Refund",
+  "ownerCommission": "Owner Commission",
+  "platformShare": "Platform Share",
+  "pleaseEnterAmount": "Please enter amount",
+  "invalidAmountFormat": "Invalid amount format",
+  "pleaseSelectType": "Please select type",
+  "fundRequestSubmitted": "Fund request submitted, pending approval",
+  "submitFailed": "Submit failed",
+  "pleaseEnterTransferAmount": "Please enter transfer amount",
+  "transferAmountExceeds": "Transfer amount cannot exceed ¥{amount}",
+  "@transferAmountExceeds": {
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
+  "transferSuccess": "Transfer successful",
+  "transferFailed": "Transfer failed",
+  "pendingPlayerRequests": "Pending Player Requests",
+  "noPendingRequests": "No pending requests",
+  "unknownUser": "Unknown User",
+  "confirmApprove": "Confirm Approve",
+  "confirmReject": "Confirm Reject",
+  "confirmApproveMessage": "Are you sure you want to approve this request?",
+  "confirmRejectMessage": "Are you sure you want to reject this request?",
+  "approve": "Approve",
+  "reject": "Reject",
+  "requestApproved": "Request approved",
+  "requestRejected": "Request rejected",
+  "operationFailed": "Operation failed",
+  "basicInfo": "Basic Info",
+  "gameSettings": "Game Settings",
+  "feeSettings": "Fee Settings",
+  "securitySettings": "Security Settings",
+  "platformFeeFixed": "Platform Fee (Fixed)",
+  "ownerFee": "Owner Fee",
+  "totalFee": "Total Fee",
+  "adjustOwnerFee": "Adjust Owner Fee:",
+  "feeNote": "Note: Total fee is deducted from prize pool at settlement",
+  "roomPassword": "Room Password",
+  "setPassword": "Set Password",
+  "pleaseEnterRoomName": "Please enter room name",
+  "pleaseEnterPassword": "Please enter password",
+  "createFailed": "Create failed",
+  "winnersMustLessThanPlayers": "Winners must be less than max players",
+  "minPlayersHint": "Winners per round, need at least {count} players to start",
+  "@minPlayersHint": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "maxPlayersHint": "Maximum players in room",
+  "connectionError": "Connection error",
+  "connectionClosed": "Connection closed, reconnecting...",
+  "joinRoomFailed": "Failed to join room",
+  "joinRoomTitle": "Join Room",
+  "currentBalance": "Current Balance",
+  "minBalanceRequired": "Min Balance Required",
+  "insufficientBalanceCannotJoin": "Insufficient balance, cannot join room",
+  "riskWarning": "Risk Warning",
+  "riskWarningTip1": "Gambling involves risk, please participate responsibly",
+  "riskWarningTip2": "You will automatically join each round after entering",
+  "confirmJoin": "Confirm Join",
+  "minPlayersRequired": "Min Players",
+  "winnersPerRound": "Winners/Round",
+  "maxPlayersAllowed": "Max Players",
+  "betPerRoundLabel": "Bet/Round",
+  "personUnit": ""
+}

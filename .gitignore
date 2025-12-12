@@ -1,0 +1,66 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.out
+
+# Go
+server/bin/
+server/vendor/
+server/*.log
+
+# Flutter
+app/.dart_tool/
+app/.packages
+app/.pub/
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+admin/.dart_tool/
+admin/.packages
+admin/.pub/
+admin/build/
+admin/.flutter-plugins
+admin/.flutter-plugins-dependencies
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.local.yaml
+
+# Logs
+*.log
+logs/
+
+# Test
+coverage/
+*.cover
+*.out
+
+# Database
+*.db
+*.sqlite
+
+# Docker volumes (if local)
+postgres_data/
+redis_data/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Secrets
+*.pem
+*.key
+secrets/
