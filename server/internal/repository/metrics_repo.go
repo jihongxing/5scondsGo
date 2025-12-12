@@ -64,8 +64,9 @@ func (r *MetricsRepo) GetHistory(ctx context.Context, from, to time.Time, limit 
 }
 
 // GetOnlinePlayersCount 获取在线玩家数
+// 查询当前在房间内且在线的玩家数量
 func (r *MetricsRepo) GetOnlinePlayersCount(ctx context.Context) (int, error) {
-	sql := `SELECT COUNT(*) FROM room_players WHERE left_at IS NULL`
+	sql := `SELECT COUNT(*) FROM room_players WHERE left_at IS NULL AND is_online = true`
 	var count int
 	err := DB.QueryRow(ctx, sql).Scan(&count)
 	return count, err
@@ -102,19 +103,21 @@ func (r *MetricsRepo) GetDailyActiveUsers(ctx context.Context) (int, error) {
 
 // GetDailyVolume 获取日交易量
 func (r *MetricsRepo) GetDailyVolume(ctx context.Context) (decimal.Decimal, error) {
-	sql := `SELECT COALESCE(SUM(ABS(amount)), 0) FROM transactions 
+	sql := `SELECT COALESCE(SUM(ABS(amount)), 0) FROM balance_transactions 
 		WHERE created_at > NOW() - INTERVAL '24 hours'
-		AND tx_type IN ('bet', 'win', 'deposit', 'withdraw')`
+		AND tx_type IN ('game_bet', 'game_win', 'deposit', 'withdraw')`
 	var volume decimal.Decimal
 	err := DB.QueryRow(ctx, sql).Scan(&volume)
 	return volume, err
 }
 
 // GetPlatformRevenue 获取平台收入（今日）
+// 从 game_rounds 表汇总已结算回合的平台抽成
 func (r *MetricsRepo) GetPlatformRevenue(ctx context.Context) (decimal.Decimal, error) {
-	sql := `SELECT COALESCE(SUM(amount), 0) FROM transactions 
-		WHERE created_at > NOW() - INTERVAL '24 hours'
-		AND tx_type = 'platform_fee'`
+	sql := `SELECT COALESCE(SUM(platform_earning), 0) + COALESCE(SUM(residual_amount), 0)
+		FROM game_rounds 
+		WHERE status = 'settled' 
+		AND settled_at > NOW() - INTERVAL '24 hours'`
 	var revenue decimal.Decimal
 	err := DB.QueryRow(ctx, sql).Scan(&revenue)
 	return revenue, err

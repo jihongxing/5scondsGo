@@ -20,10 +20,16 @@ func NewGameRepo() *GameRepo {
 
 // CreateRound 创建游戏回合
 func (r *GameRepo) CreateRound(ctx context.Context, round *model.GameRound) error {
+	return r.CreateRoundTx(ctx, nil, round)
+}
+
+// CreateRoundTx 创建游戏回合(支持事务)
+func (r *GameRepo) CreateRoundTx(ctx context.Context, tx pgx.Tx, round *model.GameRound) error {
 	sql := `INSERT INTO game_rounds (room_id, round_number, participant_ids, skipped_ids, bet_amount, pool_amount, commit_hash, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at`
-	return DB.QueryRow(ctx, sql,
+	exec := GetExecutor(tx)
+	return exec.QueryRow(ctx, sql,
 		round.RoomID, round.RoundNumber, round.ParticipantIDs, round.SkippedIDs,
 		round.BetAmount, round.PoolAmount, round.CommitHash, round.Status,
 	).Scan(&round.ID, &round.CreatedAt)
@@ -82,9 +88,48 @@ func (r *GameRepo) SettleRoundTx(ctx context.Context, tx pgx.Tx, round *model.Ga
 
 // FailRound 标记回合失败
 func (r *GameRepo) FailRound(ctx context.Context, roundID int64, reason string) error {
+	return r.FailRoundTx(ctx, nil, roundID, reason)
+}
+
+// FailRoundTx 标记回合失败(支持事务)
+func (r *GameRepo) FailRoundTx(ctx context.Context, tx pgx.Tx, roundID int64, reason string) error {
 	sql := `UPDATE game_rounds SET status = $1, failure_reason = $2, settled_at = NOW() WHERE id = $3`
-	_, err := DB.Exec(ctx, sql, model.RoundStatusFailed, reason, roundID)
+	exec := GetExecutor(tx)
+	_, err := exec.Exec(ctx, sql, model.RoundStatusFailed, reason, roundID)
 	return err
+}
+
+// UpdateRoundStatus 更新回合状态
+func (r *GameRepo) UpdateRoundStatus(ctx context.Context, roundID int64, status model.RoundStatus) error {
+	return r.UpdateRoundStatusTx(ctx, nil, roundID, status)
+}
+
+// UpdateRoundStatusTx 更新回合状态(支持事务)
+func (r *GameRepo) UpdateRoundStatusTx(ctx context.Context, tx pgx.Tx, roundID int64, status model.RoundStatus) error {
+	sql := `UPDATE game_rounds SET status = $1 WHERE id = $2`
+	exec := GetExecutor(tx)
+	_, err := exec.Exec(ctx, sql, status, roundID)
+	return err
+}
+
+// GetPendingRound 获取房间中未结算的回合（状态为 betting 或 playing）
+func (r *GameRepo) GetPendingRound(ctx context.Context, roomID int64) (*model.GameRound, error) {
+	sql := `SELECT id, room_id, round_number, participant_ids, skipped_ids, winner_ids,
+		bet_amount, pool_amount, prize_per_winner, owner_earning, platform_earning, residual_amount,
+		commit_hash, reveal_seed, status, failure_reason, created_at, settled_at
+		FROM game_rounds 
+		WHERE room_id = $1 AND status IN ('betting', 'playing')
+		ORDER BY created_at DESC LIMIT 1`
+	round := &model.GameRound{}
+	err := DB.QueryRow(ctx, sql, roomID).Scan(
+		&round.ID, &round.RoomID, &round.RoundNumber, &round.ParticipantIDs, &round.SkippedIDs, &round.WinnerIDs,
+		&round.BetAmount, &round.PoolAmount, &round.PrizePerWinner, &round.OwnerEarning, &round.PlatformEarning, &round.ResidualAmount,
+		&round.CommitHash, &round.RevealSeed, &round.Status, &round.FailureReason, &round.CreatedAt, &round.SettledAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil // 没有未结算的回合
+	}
+	return round, err
 }
 
 // ListRounds 分页获取回合列表

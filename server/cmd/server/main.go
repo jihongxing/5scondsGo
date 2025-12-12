@@ -182,7 +182,7 @@ func main() {
 	friendHandler := handler.NewFriendHandler(friendService)
 	invitationHandler := handler.NewInvitationHandler(invitationService, roomService)
 	authMiddleware := handler.NewMiddleware(authService)
-	wsHandler := handler.NewWSHandler(hub, manager, authService, authService, chatService, zapLogger)
+	wsHandler := handler.NewWSHandler(hub, manager, authService, authService, chatService, roomRepo, zapLogger)
 
 	// 初始化日志级别处理器
 	logLevelHandler := handler.NewLogLevelHandler(structuredLogger)

@@ -122,7 +122,9 @@ func (rp *RoomProcessor) Start() {
 	go rp.loop()
 	go rp.phaseTickLoop()
 	go rp.offlineCheckLoop() // 离线超时检查
-	rp.logger.Info("Room processor started")
+	rp.logger.Info("Room processor started",
+		zap.Duration("tick_interval", 100*time.Millisecond),
+		zap.Duration("phase_tick_interval", WaitingTickInterval))
 }
 
 // Stop 停止处理器
@@ -331,6 +333,12 @@ func (rp *RoomProcessor) tick() {
 		return
 	}
 
+	// 记录阶段转换日志
+	rp.logger.Debug("Phase transition triggered",
+		zap.String("current_phase", string(rp.State.Phase)),
+		zap.Time("phase_end_time", rp.State.PhaseEndTime),
+		zap.Time("now", now))
+
 	// 阶段转换
 	switch rp.State.Phase {
 	case model.PhaseWaiting:
@@ -459,13 +467,10 @@ func (rp *RoomProcessor) enterBetting() {
 	poolAmount := decimal.Zero
 	playerNewBalances := make(map[int64]decimal.Decimal)
 	playerOldBalances := make(map[int64]decimal.Decimal)
+	var roundID int64
 
-	// 记录扣款前的余额
-	for _, userID := range eligiblePlayers {
-		if p := rp.State.Players[userID]; p != nil {
-			playerOldBalances[userID] = p.Balance
-		}
-	}
+	// 获取回合号（在事务外获取，避免长事务）
+	lastNum, _ := rp.gameRepo.GetLastRoundNumber(ctx, rp.RoomID)
 
 	err = repository.Tx(ctx, func(tx pgx.Tx) error {
 		// 批量扣款（单条 SQL）
@@ -478,6 +483,8 @@ func (rp *RoomProcessor) enterBetting() {
 		for _, result := range deductResults {
 			participants = append(participants, result.UserID)
 			playerNewBalances[result.UserID] = result.NewBalance
+			// 从新余额反推旧余额（新余额 + 扣款金额 = 旧余额）
+			playerOldBalances[result.UserID] = result.NewBalance.Add(betAmount)
 			poolAmount = poolAmount.Add(betAmount)
 		}
 
@@ -486,7 +493,23 @@ func (rp *RoomProcessor) enterBetting() {
 			return fmt.Errorf("not enough participants after deduction: need %d, got %d", rp.getMinPlayers(), len(participants))
 		}
 
-		// 批量创建交易记录（单条 SQL）
+		// 创建回合记录（在事务内创建，以便获取 RoundID）
+		round := &model.GameRound{
+			RoomID:         rp.RoomID,
+			RoundNumber:    lastNum + 1,
+			ParticipantIDs: participants,
+			SkippedIDs:     skipped,
+			BetAmount:      rp.Room.BetAmount,
+			PoolAmount:     poolAmount,
+			CommitHash:     &commitHash,
+			Status:         model.RoundStatusBetting,
+		}
+		if err := rp.gameRepo.CreateRoundTx(ctx, tx, round); err != nil {
+			return fmt.Errorf("create round: %w", err)
+		}
+		roundID = round.ID
+
+		// 批量创建交易记录（单条 SQL，包含 RoundID）
 		txRecords := make([]*model.BalanceTransaction, 0, len(participants))
 		for _, userID := range participants {
 			oldBalance := playerOldBalances[userID]
@@ -494,6 +517,7 @@ func (rp *RoomProcessor) enterBetting() {
 			txRecords = append(txRecords, &model.BalanceTransaction{
 				UserID:        userID,
 				RoomID:        &rp.RoomID,
+				RoundID:       &roundID,
 				Type:          model.TxGameBet,
 				Amount:        betAmount.Neg(),
 				BalanceBefore: oldBalance,
@@ -544,26 +568,7 @@ func (rp *RoomProcessor) enterBetting() {
 	rp.State.Participants = participants
 	rp.State.SkippedPlayers = skipped
 	rp.State.PoolAmount = poolAmount
-
-	// 创建回合记录
-	lastNum, _ := rp.gameRepo.GetLastRoundNumber(ctx, rp.RoomID)
-	round := &model.GameRound{
-		RoomID:         rp.RoomID,
-		RoundNumber:    lastNum + 1,
-		ParticipantIDs: participants,
-		SkippedIDs:     skipped,
-		BetAmount:      rp.Room.BetAmount,
-		PoolAmount:     poolAmount,
-		CommitHash:     &commitHash,
-		Status:         model.RoundStatusBetting,
-	}
-	if err := rp.gameRepo.CreateRound(ctx, round); err != nil {
-		rp.logger.Error("Create round failed", zap.Error(err))
-		// 创建回合失败，需要退款并返回等待状态
-		rp.refundAndWait(ctx, participants)
-		return
-	}
-	rp.State.RoundID = round.ID
+	rp.State.RoundID = roundID
 
 	rp.State.Phase = model.PhaseBetting
 	rp.State.PhaseEndTime = time.Now().Add(PhaseDuration)
@@ -585,6 +590,15 @@ func (rp *RoomProcessor) enterBetting() {
 
 // enterInGame 进入游戏中阶段
 func (rp *RoomProcessor) enterInGame() {
+	ctx := context.Background()
+
+	// 更新回合状态为 playing
+	if rp.State.RoundID > 0 {
+		if err := rp.gameRepo.UpdateRoundStatus(ctx, rp.State.RoundID, model.RoundStatusPlaying); err != nil {
+			rp.logger.Warn("Failed to update round status to playing", zap.Error(err))
+		}
+	}
+
 	rp.State.Phase = model.PhaseInGame
 	rp.State.PhaseEndTime = time.Now().Add(PhaseDuration)
 	rp.broadcastPhaseChange()
@@ -619,17 +633,40 @@ func (rp *RoomProcessor) enterSettlement() {
 
 	// 使用事务执行批量结算操作（优化：减少 SQL 次数）
 	winnerNames := []string{}
-	winnerBalances := make(map[int64]decimal.Decimal) // 记录赢家新余额
-	winnerOldBalances := make(map[int64]decimal.Decimal) // 记录赢家旧余额
+	winnerBalances := make(map[int64]decimal.Decimal)    // 记录赢家新余额（从数据库返回）
+	winnerOldBalances := make(map[int64]decimal.Decimal) // 记录赢家旧余额（从新余额反推）
 
 	// 收集赢家信息
+	// 注意：必须确保所有赢家都能收到奖金，否则应该退款
 	winnerAmounts := make(map[int64]decimal.Decimal)
 	for _, winnerID := range winners {
 		if p := rp.State.Players[winnerID]; p != nil {
 			winnerAmounts[winnerID] = prizePerWinner
-			winnerOldBalances[winnerID] = p.Balance
 			winnerNames = append(winnerNames, p.Username)
+		} else {
+			// 赢家不在内存中，尝试从数据库获取用户信息
+			rp.logger.Warn("Winner not in memory state, fetching from DB",
+				zap.Int64("winner_id", winnerID),
+				zap.Int64("round_id", rp.State.RoundID))
+			if user, err := rp.userRepo.GetByID(ctx, winnerID); err == nil && user != nil {
+				winnerAmounts[winnerID] = prizePerWinner
+				winnerNames = append(winnerNames, user.Username)
+			} else {
+				rp.logger.Error("Failed to get winner from DB, settlement will fail",
+					zap.Int64("winner_id", winnerID),
+					zap.Error(err))
+			}
 		}
+	}
+
+	// 验证所有赢家都能收到奖金
+	if len(winnerAmounts) != len(winners) {
+		rp.logger.Error("Not all winners can receive prize, refunding",
+			zap.Int("expected_winners", len(winners)),
+			zap.Int("actual_winners", len(winnerAmounts)),
+			zap.Int64s("winners", winners))
+		rp.handleSettlementFailure(ctx, "winner_not_found")
+		return
 	}
 
 	err := repository.Tx(ctx, func(tx pgx.Tx) error {
@@ -641,6 +678,8 @@ func (rp *RoomProcessor) enterSettlement() {
 			}
 			for _, result := range addResults {
 				winnerBalances[result.UserID] = result.NewBalance
+				// 从新余额反推旧余额（新余额 - 奖金 = 旧余额）
+				winnerOldBalances[result.UserID] = result.NewBalance.Sub(prizePerWinner)
 			}
 		}
 
@@ -648,13 +687,13 @@ func (rp *RoomProcessor) enterSettlement() {
 		if len(winners) > 0 {
 			txRecords := make([]*model.BalanceTransaction, 0, len(winners))
 			for _, winnerID := range winners {
-				oldBalance := winnerOldBalances[winnerID]
-				newBalance := winnerBalances[winnerID]
-				if newBalance.IsZero() {
-					// 如果没有在结果中，使用计算值
-					newBalance = oldBalance.Add(prizePerWinner)
-					winnerBalances[winnerID] = newBalance
+				newBalance, ok := winnerBalances[winnerID]
+				if !ok {
+					// 赢家不在结果中，跳过
+					rp.logger.Warn("Winner not in balance results", zap.Int64("winner_id", winnerID))
+					continue
 				}
+				oldBalance := winnerOldBalances[winnerID]
 				txRecords = append(txRecords, &model.BalanceTransaction{
 					UserID:        winnerID,
 					RoomID:        &rp.RoomID,
@@ -795,9 +834,9 @@ func (rp *RoomProcessor) handleSettlementFailure(ctx context.Context, reason str
 			}
 		}
 
-		// 标记回合失败
-		if err := rp.gameRepo.FailRound(ctx, rp.State.RoundID, reason); err != nil {
-			rp.logger.Warn("Failed to mark round as failed", zap.Error(err))
+		// 标记回合失败（使用事务版本）
+		if err := rp.gameRepo.FailRoundTx(ctx, tx, rp.State.RoundID, reason); err != nil {
+			return fmt.Errorf("fail round: %w", err)
 		}
 
 		return nil
@@ -991,6 +1030,15 @@ func (rp *RoomProcessor) AddPlayer(user *model.User) {
 		// 重连：保留原有的 AutoReady 状态，只更新在线状态和余额
 		existingPlayer.IsOnline = true
 		existingPlayer.Balance = balance
+		// 广播玩家上线状态
+		online := true
+		rp.Broadcaster.BroadcastToRoom(rp.RoomID, &model.WSMessage{
+			Type: model.WSTypePlayerUpdate,
+			Payload: &model.WSPlayerUpdate{
+				UserID:   user.ID,
+				IsOnline: &online,
+			},
+		})
 		return
 	}
 
@@ -1025,6 +1073,20 @@ func (rp *RoomProcessor) AddPlayer(user *model.User) {
 func (rp *RoomProcessor) LoadPlayersFromDB(ctx context.Context) error {
 	if rp.roomRepo == nil {
 		return nil
+	}
+
+	// 检查是否有未结算的回合，如果有则自动退款
+	if rp.gameRepo != nil {
+		pendingRound, err := rp.gameRepo.GetPendingRound(ctx, rp.RoomID)
+		if err != nil {
+			rp.logger.Warn("Failed to check pending round", zap.Error(err))
+		} else if pendingRound != nil {
+			rp.logger.Warn("Found pending round on startup, refunding",
+				zap.Int64("round_id", pendingRound.ID),
+				zap.String("status", string(pendingRound.Status)),
+				zap.Int("participants", len(pendingRound.ParticipantIDs)))
+			rp.refundPendingRound(ctx, pendingRound)
+		}
 	}
 
 	// 获取房间中的所有玩家
@@ -1064,6 +1126,102 @@ func (rp *RoomProcessor) LoadPlayersFromDB(ctx context.Context) error {
 
 	rp.logger.Info("Loaded players from DB", zap.Int("count", len(roomPlayers)))
 	return nil
+}
+
+// refundPendingRound 退款未结算的回合（服务器重启后恢复时调用）
+func (rp *RoomProcessor) refundPendingRound(ctx context.Context, round *model.GameRound) {
+	if len(round.ParticipantIDs) == 0 {
+		// 没有参与者，直接标记失败
+		if err := rp.gameRepo.FailRound(ctx, round.ID, "server_restart_no_participants"); err != nil {
+			rp.logger.Error("Failed to mark round as failed", zap.Error(err))
+		}
+		return
+	}
+
+	betAmount := round.BetAmount
+	playerNewBalances := make(map[int64]decimal.Decimal)
+	playerOldBalances := make(map[int64]decimal.Decimal)
+
+	// 收集退款信息，从数据库获取最新余额
+	refundAmounts := make(map[int64]decimal.Decimal)
+	for _, userID := range round.ParticipantIDs {
+		user, err := rp.userRepo.GetByID(ctx, userID)
+		if err != nil {
+			rp.logger.Warn("Failed to get user for refund", zap.Int64("user_id", userID), zap.Error(err))
+			continue
+		}
+		refundAmounts[userID] = betAmount
+		playerOldBalances[userID] = user.Balance
+	}
+
+	if len(refundAmounts) == 0 {
+		rp.logger.Warn("No users to refund")
+		if err := rp.gameRepo.FailRound(ctx, round.ID, "server_restart_no_users"); err != nil {
+			rp.logger.Error("Failed to mark round as failed", zap.Error(err))
+		}
+		return
+	}
+
+	// 执行退款事务
+	err := repository.Tx(ctx, func(tx pgx.Tx) error {
+		// 批量退款
+		addResults, err := rp.userRepo.BatchAddBalanceTx(ctx, tx, refundAmounts)
+		if err != nil {
+			return fmt.Errorf("batch refund: %w", err)
+		}
+		for _, result := range addResults {
+			playerNewBalances[result.UserID] = result.NewBalance
+		}
+
+		// 批量创建退款交易记录
+		txRecords := make([]*model.BalanceTransaction, 0, len(round.ParticipantIDs))
+		for _, userID := range round.ParticipantIDs {
+			oldBalance, ok := playerOldBalances[userID]
+			if !ok {
+				continue
+			}
+			newBalance := playerNewBalances[userID]
+			if newBalance.IsZero() {
+				newBalance = oldBalance.Add(betAmount)
+			}
+			txRecords = append(txRecords, &model.BalanceTransaction{
+				UserID:        userID,
+				RoomID:        &rp.RoomID,
+				RoundID:       &round.ID,
+				Type:          model.TxGameRefund,
+				Amount:        betAmount,
+				BalanceBefore: oldBalance,
+				BalanceAfter:  newBalance,
+				Remark:        stringPtr("服务器重启自动退款"),
+			})
+		}
+		if len(txRecords) > 0 {
+			if err := rp.txRepo.BatchCreateTx(ctx, tx, txRecords); err != nil {
+				return fmt.Errorf("batch create refund transactions: %w", err)
+			}
+		}
+
+		// 标记回合失败（使用事务版本）
+		if err := rp.gameRepo.FailRoundTx(ctx, tx, round.ID, "server_restart"); err != nil {
+			return fmt.Errorf("fail round: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		rp.logger.Error("Failed to refund pending round", zap.Int64("round_id", round.ID), zap.Error(err))
+	} else {
+		rp.logger.Info("Successfully refunded pending round",
+			zap.Int64("round_id", round.ID),
+			zap.Int("refunded_count", len(playerNewBalances)),
+			zap.String("bet_amount", betAmount.String()))
+	}
+}
+
+// stringPtr 返回字符串指针
+func stringPtr(s string) *string {
+	return &s
 }
 
 // RemovePlayer 移除玩家（主动离开房间时调用）
@@ -1131,6 +1289,15 @@ func (rp *RoomProcessor) SetAutoReady(userID int64, autoReady bool) {
 
 	if p := rp.State.Players[userID]; p != nil {
 		p.AutoReady = autoReady
+
+		// 同步到数据库
+		if rp.roomRepo != nil {
+			ctx := context.Background()
+			if err := rp.roomRepo.UpdatePlayerAutoReady(ctx, rp.RoomID, userID, autoReady); err != nil {
+				rp.logger.Warn("Failed to update auto_ready in DB", zap.Int64("user_id", userID), zap.Error(err))
+			}
+		}
+
 		rp.Broadcaster.BroadcastToRoom(rp.RoomID, &model.WSMessage{
 			Type: model.WSTypePlayerUpdate,
 			Payload: &model.WSPlayerUpdate{

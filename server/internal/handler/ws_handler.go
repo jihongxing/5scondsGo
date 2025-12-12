@@ -45,23 +45,31 @@ type ChatServiceInterface interface {
 	CheckEmojiRateLimit(userID int64) error
 }
 
-type WSHandler struct {
-	hub            *ws.Hub
-	manager        *game.Manager
-	tokenValidator TokenValidator
-	userGetter     UserGetter
-	chatService    ChatServiceInterface
-	logger         *zap.Logger
+// RoomPlayerManager 用于管理房间玩家数据库记录
+type RoomPlayerManager interface {
+	AddPlayer(ctx context.Context, rp *model.RoomPlayer) error
+	RemovePlayer(ctx context.Context, roomID, userID int64) error
 }
 
-func NewWSHandler(hub *ws.Hub, manager *game.Manager, tokenValidator TokenValidator, userGetter UserGetter, chatService ChatServiceInterface, logger *zap.Logger) *WSHandler {
+type WSHandler struct {
+	hub               *ws.Hub
+	manager           *game.Manager
+	tokenValidator    TokenValidator
+	userGetter        UserGetter
+	chatService       ChatServiceInterface
+	roomPlayerManager RoomPlayerManager
+	logger            *zap.Logger
+}
+
+func NewWSHandler(hub *ws.Hub, manager *game.Manager, tokenValidator TokenValidator, userGetter UserGetter, chatService ChatServiceInterface, roomPlayerManager RoomPlayerManager, logger *zap.Logger) *WSHandler {
 	return &WSHandler{
-		hub:            hub,
-		manager:        manager,
-		tokenValidator: tokenValidator,
-		userGetter:     userGetter,
-		chatService:    chatService,
-		logger:         logger,
+		hub:               hub,
+		manager:           manager,
+		tokenValidator:    tokenValidator,
+		userGetter:        userGetter,
+		chatService:       chatService,
+		roomPlayerManager: roomPlayerManager,
+		logger:          logger,
 	}
 }
 
@@ -97,16 +105,17 @@ func (h *WSHandler) HandleWS(c *gin.Context) {
 	metrics.RecordWSConnection(1)
 
 	client := &wsClient{
-		conn:        conn,
-		userID:      claims.UserID,
-		username:    claims.Username,
-		sessionID:   sessionID,
-		ctx:         ctx,
-		hub:         h.hub,
-		manager:     h.manager,
-		userGetter:  h.userGetter,
-		chatService: h.chatService,
-		logger:      h.logger.With(zap.Int64("user_id", claims.UserID), zap.String("session_id", sessionID)),
+		conn:            conn,
+		userID:          claims.UserID,
+		username:        claims.Username,
+		sessionID:       sessionID,
+		ctx:             ctx,
+		hub:             h.hub,
+		manager:         h.manager,
+		userGetter:        h.userGetter,
+		chatService:       h.chatService,
+		roomPlayerManager: h.roomPlayerManager,
+		logger:            h.logger.With(zap.Int64("user_id", claims.UserID), zap.String("session_id", sessionID)),
 	}
 
 	h.logger.Info("WebSocket connection established",
@@ -119,18 +128,19 @@ func (h *WSHandler) HandleWS(c *gin.Context) {
 }
 
 type wsClient struct {
-	conn        *websocket.Conn
-	userID      int64
-	username    string
-	sessionID   string
-	ctx         context.Context
-	roomID      int64
-	hub         *ws.Hub
-	manager     *game.Manager
-	userGetter  UserGetter
-	chatService ChatServiceInterface
-	writeMu     sync.Mutex // 保护 WebSocket 写操作
-	logger      *zap.Logger
+	conn              *websocket.Conn
+	userID            int64
+	username          string
+	sessionID         string
+	ctx               context.Context
+	roomID            int64
+	hub               *ws.Hub
+	manager           *game.Manager
+	userGetter        UserGetter
+	chatService       ChatServiceInterface
+	roomPlayerManager RoomPlayerManager
+	writeMu           sync.Mutex // 保护 WebSocket 写操作
+	logger            *zap.Logger
 }
 
 // safeConn 是一个线程安全的连接包装器，用于 Hub 广播
@@ -142,6 +152,8 @@ type safeConn struct {
 func (s *safeConn) WriteJSON(v interface{}) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	// 设置写入超时，避免永久阻塞
+	s.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return s.conn.WriteJSON(v)
 }
 
@@ -153,6 +165,8 @@ func (s *safeConn) Close() error {
 func (c *wsClient) writeJSON(v interface{}) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	// 设置写入超时，避免永久阻塞
+	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return c.conn.WriteJSON(v)
 }
 
@@ -273,21 +287,21 @@ func (c *wsClient) handleJoinRoom(payload interface{}) {
 		return
 	}
 
-	// 检查是否已是参与者
+	// 检查是否已是参与者（在内存中）
 	isExistingPlayer := processor.IsParticipant(c.userID)
 
-	// 如果不是已有参与者，检查房间状态
+	// 获取用户信息（后面可能需要用到）
+	user, err := c.userGetter.GetUserByID(context.Background(), c.userID)
+	if err != nil {
+		c.sendError(500, "failed to get user")
+		return
+	}
+
+	// 如果不是已有参与者（不在内存中），检查房间状态
 	if !isExistingPlayer {
 		state := processor.GetRoomState()
 		// 游戏进行中（非等待阶段）只能以观战者身份加入
 		if state.Phase != model.PhaseWaiting {
-			// 获取用户信息
-			user, err := c.userGetter.GetUserByID(context.Background(), c.userID)
-			if err != nil {
-				c.sendError(500, "failed to get user")
-				return
-			}
-
 			// 自动以观战者身份加入
 			if err := processor.AddSpectator(user); err != nil {
 				switch err {
@@ -322,20 +336,28 @@ func (c *wsClient) handleJoinRoom(payload interface{}) {
 			return
 		}
 
-		// 获取用户信息并添加为玩家
-		user, err := c.userGetter.GetUserByID(context.Background(), c.userID)
-		if err != nil {
-			c.sendError(500, "failed to get user")
-			return
+		// 先添加到数据库
+		if c.roomPlayerManager != nil {
+			rp := &model.RoomPlayer{
+				RoomID:    req.RoomID,
+				UserID:    c.userID,
+				AutoReady: false,
+			}
+			if err := c.roomPlayerManager.AddPlayer(context.Background(), rp); err != nil {
+				c.logger.Warn("Failed to add player to DB", zap.Error(err))
+				// 继续执行，不阻塞加入房间
+			}
 		}
+
+		// 添加到内存
+		processor.AddPlayer(user)
+	} else {
+		// 玩家已在内存中，调用 AddPlayer 会处理重连逻辑（更新在线状态和余额）
 		processor.AddPlayer(user)
 	}
 
 	c.roomID = req.RoomID
 	c.hub.AddConn(req.RoomID, c.userID, &safeConn{conn: c.conn, writeMu: &c.writeMu})
-
-	// 标记在线
-	processor.SetPlayerOnline(c.userID, true)
 
 	// 发送房间状态
 	state := processor.GetRoomStateForUser(c.userID)
@@ -352,19 +374,37 @@ func (c *wsClient) handleLeaveRoom() {
 		return
 	}
 
-	c.hub.RemoveConn(c.roomID, c.userID)
+	roomID := c.roomID
+	c.hub.RemoveConn(roomID, c.userID)
 
-	if processor := c.manager.GetRoom(c.roomID); processor != nil {
+	if processor := c.manager.GetRoom(roomID); processor != nil {
 		// 检查是观战者还是参与者
 		if processor.IsSpectator(c.userID) {
 			processor.RemoveSpectator(c.userID)
 		} else {
 			// 主动离开房间：完全移除玩家（不同于断线只标记离线）
+			// RemovePlayer 会清理内存、数据库并广播
 			processor.RemovePlayer(c.userID)
+		}
+	} else {
+		// 房间处理器不存在，但仍需清理数据库记录
+		// 这种情况可能发生在服务器重启后房间未被加载
+		if c.roomPlayerManager != nil {
+			ctx := context.Background()
+			if err := c.roomPlayerManager.RemovePlayer(ctx, roomID, c.userID); err != nil {
+				c.logger.Warn("Failed to remove player from DB (processor not found)",
+					zap.Int64("room_id", roomID),
+					zap.Int64("user_id", c.userID),
+					zap.Error(err))
+			} else {
+				c.logger.Info("Player removed from DB (processor not found)",
+					zap.Int64("room_id", roomID),
+					zap.Int64("user_id", c.userID))
+			}
 		}
 	}
 
-	c.logger.Info("User left room (removed)", zap.Int64("room_id", c.roomID))
+	c.logger.Info("User left room (removed)", zap.Int64("room_id", roomID))
 	c.roomID = 0
 }
 

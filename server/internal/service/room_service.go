@@ -272,13 +272,14 @@ func (s *RoomService) JoinRoom(ctx context.Context, userID, roomID int64, passwo
 			// 已经在目标房间，直接返回成功
 			return nil
 		}
-		// 在其他房间，先离开
-		if err := s.roomRepo.RemovePlayer(ctx, currentRoom.RoomID, userID); err != nil {
-			return err
-		}
-		// 通知游戏引擎玩家离开
+		// 在其他房间，先离开（RemovePlayer 会处理内存、数据库清理和广播）
 		if processor := s.manager.GetRoom(currentRoom.RoomID); processor != nil {
 			processor.RemovePlayer(userID)
+		} else {
+			// 如果游戏引擎中没有这个房间，直接从数据库删除
+			if err := s.roomRepo.RemovePlayer(ctx, currentRoom.RoomID, userID); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -320,13 +321,14 @@ func (s *RoomService) LeaveRoom(ctx context.Context, userID int64) error {
 		return ErrNotInRoom
 	}
 
-	if err := s.roomRepo.RemovePlayer(ctx, currentRoom.RoomID, userID); err != nil {
-		return err
-	}
-
-	// 通知游戏引擎
+	// 通知游戏引擎（RemovePlayer 会处理内存、数据库清理和广播）
 	if processor := s.manager.GetRoom(currentRoom.RoomID); processor != nil {
 		processor.RemovePlayer(userID)
+	} else {
+		// 如果游戏引擎中没有这个房间，直接从数据库删除
+		if err := s.roomRepo.RemovePlayer(ctx, currentRoom.RoomID, userID); err != nil {
+			return err
+		}
 	}
 
 	return nil
